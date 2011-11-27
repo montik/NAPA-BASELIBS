@@ -256,6 +256,8 @@ typedef void (*connection_failed_cb)(int connectionID,void *arg);
  */
 typedef void (*receive_data_cb)(char *buffer,int buflen,unsigned char msgtype,recv_params *rparams);
 
+typedef double (*get_rtt_cb) (socketID_handle socket);
+
 #ifdef __cplusplus
 extern "C" {
 #endif
