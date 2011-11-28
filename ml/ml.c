@@ -212,7 +212,7 @@ struct pkt_recv_timeout_cb_arg{
   int recv_id;
   int seqnr;
   int gap;
-  socketID* external_socketID;
+  socket_ID* external_socketID;
 };
 
 
@@ -286,7 +286,7 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
  
   /*set the next timeout*/
   if (get_Rtt_cb != NULL){
-    rtt = (*get_Rtt_cb) (external_socketID);
+    rtt = (*get_Rtt_cb) (args->external_socketID);
   }
   if (rtt){
     time_out.tv_sec = (int) rtt;
@@ -1119,7 +1119,7 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
     args->recv_id = recv_id;
     args->seqnr = recvdatabuf[recv_id]->seqnr;
     args->gap = recvdatabuf[recv_id]->gapCounter++;
-    args->external_socketID = &connectbuf[msg_h->external_connectionID]->external_socketID;
+    args->external_socketID = &connectbuf[msg_h->remote_con_id]->external_socketID;
     event_base_once(base, -1, EV_TIMEOUT, &pkt_recv_timeout_cb, (void *) args, &pkt_recv_timeout);
   }
 
