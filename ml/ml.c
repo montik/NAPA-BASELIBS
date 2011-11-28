@@ -212,7 +212,7 @@ struct pkt_recv_timeout_cb_arg{
   int recv_id;
   int seqnr;
   int gap;
-  int retry;
+  socketID* external_socketID;
 };
 
 
@@ -250,41 +250,53 @@ void recv_nack_msg(struct msg_header *msg_h, char *msgbuf, int msg_size)
 
 void send_msg(int con_id, int msg_type, void* msg, int msg_len, bool truncable, send_params * sParams);
 
-void pkt_recv_timeout_cb(int fd, short event, void *arg){
+void pkt_recv_timeout_cb(int fd, short event, void *arg)
+{
   struct pkt_recv_timeout_cb_arg *args = arg;
   int recv_id = args->recv_id;
   int seqnr = args->seqnr;
   int gap = args->gap;
+  double rtt;
+  struct timeval time_out;
 
   debug("ML: pkt_recv_timeout_cb called. Timeout for id:%d\n",recv_id);
 
-  //check if message still exists	
-  if (recvdatabuf[recv_id] == NULL || recvdatabuf[recv_id]->seqnr != seqnr) {
+  /*check if the message and the gap still exist*/
+  if (recvdatabuf[recv_id] == NULL 
+      || recvdatabuf[recv_id]->seqnr != seqnr) {
     free(args);
     return;
   }
-
-  //check if gap was filled in the meantime
-  if (recvdatabuf[recv_id]->gapArray[gap].offsetFrom == recvdatabuf[recv_id]->gapArray[gap].offsetTo) {
+  if (recvdatabuf[recv_id]->gapArray[gap].offsetFrom == 
+      recvdatabuf[recv_id]->gapArray[gap].offsetTo) {
     free(args);
     return;	
   }
 
+  /*initialize and send nackmsg*/
   struct nack_msg nackmsg;
   nackmsg.con_id = recvdatabuf[recv_id]->txConnectionID;
   nackmsg.msg_seq_num = recvdatabuf[recv_id]->seqnr;
   nackmsg.offsetFrom = recvdatabuf[recv_id]->gapArray[gap].offsetFrom;
   nackmsg.offsetTo = recvdatabuf[recv_id]->gapArray[gap].offsetTo;
-
   unsigned int gapSize = nackmsg.offsetTo - nackmsg.offsetFrom;
-
-  send_msg(recvdatabuf[recv_id]->connectionID, ML_NACK_MSG, (char *) &nackmsg, sizeof(struct nack_msg), true, &(connectbuf[recvdatabuf[recv_id]->connectionID]->defaultSendParams));	
-
-  if (--args->retry > 0) {
-    event_base_once(base, -1, EV_TIMEOUT, &pkt_recv_timeout_cb, arg, &pkt_recv_timeout_retry);	//prepare the next timeout
-  } else {
-    free(args);
+  send_msg (recvdatabuf[recv_id]->connectionID, ML_NACK_MSG, 
+        (char *) &nackmsg, sizeof(struct nack_msg), true, 
+        &(connectbuf[recvdatabuf[recv_id]->connectionID]->defaultSendParams));
+ 
+  /*set the next timeout*/
+  if (get_Rtt_cb != NULL){
+    rtt = (*get_Rtt_cb) (external_socketID);
   }
+  if (rtt){
+    time_out.tv_sec = (int) rtt;
+    time_out.tv_usec = (rtt - (int) rtt) * 1000000 + 50000;
+  }else{
+    time_out.tv_sec = 0;
+    time_out.tv_usec = 50000;
+  }
+  event_base_once (base, -1, &time_out, &pkt_recv_timeout_cb, arg, 
+                  &pkt_recv_timeout_retry);
 }
 
 void last_pkt_recv_timeout_cb(int fd, short event, void *arg){
@@ -984,7 +996,9 @@ void recv_timeout_cb(int fd, short event, void *arg)
   recvdatabuf[recv_id] = NULL;
 }
 
-// process a single recv data message
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * Process a single data message
+ */
 void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
 {
 #ifdef FEC
@@ -1105,7 +1119,7 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
     args->recv_id = recv_id;
     args->seqnr = recvdatabuf[recv_id]->seqnr;
     args->gap = recvdatabuf[recv_id]->gapCounter++;
-    args->retry = RTX_RETRY;
+    args->external_socketID = &connectbuf[msg_h->external_connectionID]->external_socketID;
     event_base_once(base, -1, EV_TIMEOUT, &pkt_recv_timeout_cb, (void *) args, &pkt_recv_timeout);
   }
 
@@ -2518,3 +2532,4 @@ void recv_pkg(int fd, short event, void *arg)
     }
 
     /**************************** END of NAT functions *************************/
+/* vim: set cindent: */
