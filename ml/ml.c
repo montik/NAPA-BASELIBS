@@ -97,7 +97,7 @@ struct event_base *base;
 /*
  * how many times try retransmissions ( e.g. 1:only one attempt)
  */
-#define RTX_RETRY 1
+#define RTX_RETRY 5
 
 /*
  * retry with NACK if still not received
