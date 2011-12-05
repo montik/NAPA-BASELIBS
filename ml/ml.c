@@ -212,6 +212,7 @@ struct pkt_recv_timeout_cb_arg{
   int recv_id;
   int seqnr;
   int gap;
+  int retry;
   socket_ID* external_socketID;
 };
 
@@ -296,8 +297,11 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
     time_out.tv_sec = 0;
     time_out.tv_usec = 50000;
 //  }
-  event_base_once (base, -1, &time_out, &pkt_recv_timeout_cb, arg, 
+  
+  if (--(arg->retry)>0){
+    event_base_once (base, -1, &time_out, &pkt_recv_timeout_cb, arg, 
                   &pkt_recv_timeout_retry);
+  }
 }
 
 void last_pkt_recv_timeout_cb(int fd, short event, void *arg){
@@ -1120,6 +1124,7 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
     args->recv_id = recv_id;
     args->seqnr = recvdatabuf[recv_id]->seqnr;
     args->gap = recvdatabuf[recv_id]->gapCounter++;
+    args->retry = RTX_RETRY;
     args->external_socketID = &connectbuf[msg_h->remote_con_id]->external_socketID;
     event_base_once(base, -1, EV_TIMEOUT, &pkt_recv_timeout_cb, (void *) args, &pkt_recv_timeout);
   }
