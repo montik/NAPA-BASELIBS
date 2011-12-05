@@ -1121,7 +1121,7 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
     args->seqnr = recvdatabuf[recv_id]->seqnr;
     args->gap = recvdatabuf[recv_id]->gapCounter++;
     args->external_socketID = &connectbuf[msg_h->remote_con_id]->external_socketID;
-    event_base_once(base, -1, EV_TIMEOUT, &pkt_recv_timeout_cb, (void *) args, &pkt_recv_timeout);
+    //event_base_once(base, -1, EV_TIMEOUT, &pkt_recv_timeout_cb, (void *) args, &pkt_recv_timeout);
   }
 
   //filling the gap by delayed packets
