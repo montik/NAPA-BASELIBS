@@ -1200,7 +1200,6 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
 
   if (recv_data_callback) {
     if(recvdatabuf[recv_id]->status == COMPLETE) {
-      fprintf (stderr, "EDO: pacchetto %d \t\t %f\n", recvdatabuf[recv_id]->seqnr, rtt);
       // Monitoring layer hook
       if(get_Recv_data_inf_cb != NULL) {
         mon_data_inf recv_data_inf;
