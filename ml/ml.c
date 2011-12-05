@@ -244,6 +244,7 @@ void recv_nack_msg(struct msg_header *msg_h, char *msgbuf, int msg_size)
   unsigned int gapSize = nackmsg->offsetTo - nackmsg->offsetFrom;
   //if (gapSize == 1349) counters.receivedNACK1PktCounter++;
   //else counters.receivedNACKMorePktCounter++;
+  counters.receivedNACK1PktCounter++;
 
   rtxPacketsFromTo(nackmsg->con_id, nackmsg->msg_seq_num, nackmsg->offsetFrom, nackmsg->offsetTo);	
 }
@@ -1710,9 +1711,10 @@ void recv_pkg(int fd, short event, void *arg)
     if (get_Rtt_cb != NULL){
       rtt = (*get_Rtt_cb) (&(connectbuf[0]->external_socketID));
     }
-    fprintf(fd, "%d.%d\t%d\t%d\t%d\t%f\n",now.tv_sec, now.tv_usec, 
+    fprintf(fd, "%d.%d\t%d\t%d\t%d\t%d\t%f\n",now.tv_sec, now.tv_usec, 
       counters.receivedDataPktCounter, counters.receivedCompleteMsgCounter,
-      counters.receivedIncompleteMsgCounter, rtt);
+      counters.receivedIncompleteMsgCounter, 
+      counters.receivedNACKMorePktCounter, rtt);
     fflush (fd);
   }
 
@@ -1732,7 +1734,7 @@ void recv_pkg(int fd, short event, void *arg)
     struct timeval one_second ={1,0};
     struct event *ev1 = event_new (base, -1, EV_TIMEOUT| EV_PERSIST, log_counters_to_file_cb, port);
     evtimer_add ( ev1, &one_second );
-    
+
     return create_socket(port, ipaddr);
   }
 
