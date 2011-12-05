@@ -97,7 +97,7 @@ struct event_base *base;
 /*
  * how many times try retransmissions ( e.g. 1:only one attempt)
  */
-#define RTX_RETRY 2
+#define RTX_RETRY 1
 
 /*
  * retry with NACK if still not received
@@ -285,16 +285,16 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
         &(connectbuf[recvdatabuf[recv_id]->connectionID]->defaultSendParams));
  
   /*set the next timeout*/
-  if (get_Rtt_cb != NULL){
-    rtt = (*get_Rtt_cb) (args->external_socketID);
-  }
-  if (rtt){
-    time_out.tv_sec = (int) rtt;
-    time_out.tv_usec = (rtt - (int) rtt) * 1000000 + 50000;
-  }else{
+//  if (get_Rtt_cb != NULL){
+//    rtt = (*get_Rtt_cb) (args->external_socketID);
+//  }
+//  if (rtt){
+//    time_out.tv_sec = (int) rtt;
+//    time_out.tv_usec = (rtt - (int) rtt) * 1000000 + 50000;
+//  }else{
     time_out.tv_sec = 0;
     time_out.tv_usec = 50000;
-  }
+//  }
   event_base_once (base, -1, &time_out, &pkt_recv_timeout_cb, arg, 
                   &pkt_recv_timeout_retry);
 }
