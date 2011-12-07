@@ -1714,7 +1714,7 @@ void recv_pkg(int fd, short event, void *arg)
     fprintf(fd, "%d.%d\t%d\t%d\t%d\t%d\t%f\n",now.tv_sec, now.tv_usec, 
       counters.receivedDataPktCounter, counters.receivedCompleteMsgCounter,
       counters.receivedIncompleteMsgCounter, 
-      counters.receivedNACKMorePktCounter, rtt);
+      counters.receivedNACK1PktCounter, rtt);
     fflush (fd);
   }
 
