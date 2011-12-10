@@ -298,7 +298,7 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
     time_out.tv_usec = 50000;
 //  }
   
-  if (--(arg->retry)>0){
+  if (--(args->retry)>0){
     event_base_once (base, -1, &time_out, &pkt_recv_timeout_cb, arg, 
                   &pkt_recv_timeout_retry);
   }
