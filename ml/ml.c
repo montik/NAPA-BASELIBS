@@ -282,6 +282,7 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
   nackmsg.offsetFrom = recvdatabuf[recv_id]->gapArray[gap].offsetFrom;
   nackmsg.offsetTo = recvdatabuf[recv_id]->gapArray[gap].offsetTo;
   unsigned int gapSize = nackmsg.offsetTo - nackmsg.offsetFrom;
+  counters.sentNACK1PktCounter++;
   send_msg (recvdatabuf[recv_id]->connectionID, ML_NACK_MSG, 
         (char *) &nackmsg, sizeof(struct nack_msg), true, 
         &(connectbuf[recvdatabuf[recv_id]->connectionID]->defaultSendParams));
@@ -1719,7 +1720,7 @@ void recv_pkg(int fd, short event, void *arg)
     fprintf(fd, "%d.%d\t%d\t%d\t%d\t%d\t%f\n",now.tv_sec, now.tv_usec, 
       counters.receivedDataPktCounter, counters.receivedCompleteMsgCounter,
       counters.receivedIncompleteMsgCounter, 
-      counters.receivedNACKMorePktCounter, rtt);
+      counters.sentNACK1PktCounter, rtt);
     fflush (fd);
   }
 
