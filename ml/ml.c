@@ -259,7 +259,7 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
   int seqnr = args->seqnr;
   int gap = args->gap;
   double rtt;
-  struct timeval time_out;
+  struct timeval time_out = pkt_recv_timeout;
 
   debug("ML: pkt_recv_timeout_cb called. Timeout for id:%d\n",recv_id);
 
@@ -287,10 +287,6 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
         (char *) &nackmsg, sizeof(struct nack_msg), true, 
         &(connectbuf[recvdatabuf[recv_id]->connectionID]->defaultSendParams));
  
-  /*set the next timeout*/
-	time_out.tv_sec = 0;
-	time_out.tv_usec = PKT_RECV_TIMEOUT_DEFAULT;
-  
   if (--(args->retry)>0){
     event_base_once (base, -1, &time_out, &pkt_recv_timeout_cb, arg, 
                   &pkt_recv_timeout_retry);
