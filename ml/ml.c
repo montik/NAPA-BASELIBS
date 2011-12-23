@@ -267,14 +267,14 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
     free(args);
     return;
   }
-  if (recvdatabuf[recv_id]->gapArray[gap].offsetFrom == 
-      recvdatabuf[recv_id]->gapArray[gap].offsetTo) {
-    free(args);
-    return;	
-  }
+//  if (recvdatabuf[recv_id]->gapArray[gap].offsetFrom == 
+//      recvdatabuf[recv_id]->gapArray[gap].offsetTo) {
+//   free(args);
+//    return;	
+//  }
 
   /*initialize and send nackmsg*/
-  struct nack_msg nackmsg;
+/*  struct nack_msg nackmsg;
   nackmsg.con_id = recvdatabuf[recv_id]->txConnectionID;
   nackmsg.msg_seq_num = recvdatabuf[recv_id]->seqnr;
   nackmsg.offsetFrom = recvdatabuf[recv_id]->gapArray[gap].offsetFrom;
@@ -283,7 +283,7 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
   send_msg (recvdatabuf[recv_id]->connectionID, ML_NACK_MSG, 
         (char *) &nackmsg, sizeof(struct nack_msg), true, 
         &(connectbuf[recvdatabuf[recv_id]->connectionID]->defaultSendParams));
- 
+*/ 
   /*set the next timeout*/
   if (get_Rtt_cb != NULL){
     rtt = (*get_Rtt_cb) (args->external_socketID);
@@ -300,31 +300,32 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
 }
 
 void last_pkt_recv_timeout_cb(int fd, short event, void *arg){
-  int recv_id = (long) arg;
-  debug("ML: last_pkt_recv_timeout_cb called. Timeout for id:%d\n",recv_id);
+  recvdata *rdata = recvdatabuf [(long) arg];
 
-  if (recvdatabuf[recv_id] == NULL) {
+  if (rdata == NULL) {
     return;
   }
 
-  if (recvdatabuf[recv_id]->last_pkt_timeout_event) {
-    debug("ML: freeing last packet timeout for %d",recv_id);
-    event_del(recvdatabuf[recv_id]->last_pkt_timeout_event);
-    event_free(recvdatabuf[recv_id]->last_pkt_timeout_event);
-    recvdatabuf[recv_id]->last_pkt_timeout_event = NULL;
+  if (rdata->last_pkt_timeout_event) {
+    event_del(rdata->last_pkt_timeout_event);
+    event_free(rdata->last_pkt_timeout_event);
+    rdata->last_pkt_timeout_event = NULL;
   }
 
-  if (recvdatabuf[recv_id]->expectedOffset == recvdatabuf[recv_id]->bufsize - recvdatabuf[recv_id]->monitoringDataHeaderLen) return;
+  if (rdata->last == rdata->bufsize - rdata->monitoringDataHeaderLen)
+    return;
 
   struct nack_msg nackmsg;
-  nackmsg.con_id = recvdatabuf[recv_id]->txConnectionID;
-  nackmsg.msg_seq_num = recvdatabuf[recv_id]->seqnr;
-  nackmsg.offsetFrom = recvdatabuf[recv_id]->expectedOffset;
-  nackmsg.offsetTo = recvdatabuf[recv_id]->bufsize - recvdatabuf[recv_id]->monitoringDataHeaderLen;
+  nackmsg.con_id = rdata->txConnectionID;
+  nackmsg.msg_seq_num = rdata->seqnr;
+  nackmsg.offsetFrom = rdata->last;
+  nackmsg.offsetTo = rdata->bufsize - rdata->monitoringDataHeaderLen;
 
   unsigned int gapSize = nackmsg.offsetTo - nackmsg.offsetFrom;
 
-  send_msg(recvdatabuf[recv_id]->connectionID, ML_NACK_MSG, &nackmsg, sizeof(struct nack_msg), true, &(connectbuf[recvdatabuf[recv_id]->connectionID]->defaultSendParams));	
+  send_msg (rdata->connectionID, ML_NACK_MSG, &nackmsg, 
+      sizeof(struct nack_msg),true, 
+      &(connectbuf[rdata->connectionID]->defaultSendParams));	
 }
 
 #endif
@@ -997,6 +998,90 @@ void recv_timeout_cb(int fd, short event, void *arg)
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * This function adds a hole in the hole list.
+ *
+ * hole	  : pointer to the hole after which the insertion will happen
+ * start  : pointer to the beginning of the new hole
+ * end		: pointer to the end of the new hole
+ *
+ * the function returns the pointer to the just inserted hole
+ */
+hlist* new_hole(hlist* hole, hlist* start, void* end)
+{
+	start->next= (hole?hole->next:start);
+	start->prev= (hole?hole:start);
+	start->end = end;
+	
+	if (hole) {
+		hole->next->prev = start;
+		hole->next = start;
+	}
+	return start;
+}
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * This function fills a hole, adjusting his neighborood pointers.
+ * It has to be called when an incoming packet fills, even partially, an
+ * existing hole.
+ *
+ * hole	  : pointer to the head (last hole) in the list
+ * start	: pointer to the packet filling a hole
+ * end		: pointer to the end of the packet
+ *
+ * The returned value is a pointer to the head of the list.
+ */
+hlist* handle_hole(hlist* hole, void* start, void* end)
+{
+	hlist *position, *created_hole;
+	position = hole;
+
+	/* Search list for hole preceeding the new fragment,       */
+	/* checking list consistency and if fragment is duplicate. */
+	if (!hole){
+		printf("Dup package or inconsistent list\n");
+		return hole;
+	}
+	while((void*) position > start){
+		position=position->prev;
+		if (position == hole){
+			printf("Dup package or inconsistent list\n");
+			return hole;
+		}
+	}
+	if (position->end < end){
+		printf("Dup package or inconsistent list\n");
+		return hole;
+	}
+
+	/* Modify the filled hole, so that the list will remain */
+	/* consistent after the new fragment insertion          */
+	if ((void*)position == start){
+		if (position->end == end){
+			if ((void *)position->prev == position)
+				return NULL;
+			position->prev->next = position->next;
+			position->next->prev = position->prev;
+			return (position == hole?position->prev:hole);
+		}
+		else{
+			position->prev->next = end;
+			memcpy (end, position, sizeof(hlist));
+			position->next->prev = end;
+			return (position == hole?end:hole);
+		}
+	}else if ((void*)position < start){
+		if (end != position->end){
+			new_hole(position, end, position->end);
+			position->end = start;
+			return (position == hole?end:hole);
+		}
+		position->end = start;
+		return hole;
+	}
+	printf ("handle_hole: should not get here!!\n");
+}
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
  * Process a single data message
  */
 void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
@@ -1008,27 +1093,17 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
   k=64;
   char **src;
 #endif
-  /*get the rtt from monl*/
-  double rtt;
-  if (get_Rtt_cb != NULL){
-    rtt = (*get_Rtt_cb) (&(connectbuf[msg_h->remote_con_id]->external_socketID));
-  }
-
-  debug("ML: received packet of size %d with rconID:%d lconID:%d type:%d offset:%d inlength: %d\n",bufsize,msg_h->remote_con_id,msg_h->local_con_id,msg_h->msg_type,msg_h->offset, msg_h->msg_length);
 
   int recv_id, free_recv_id = -1;
   int pmtusize;
-
+  recvdata *rdata;
   if(connectbuf[msg_h->remote_con_id] == NULL) {
     debug("ML: Received a message not related to any opened connection!\n");
     return;
   }
   pmtusize = connectbuf[msg_h->remote_con_id]->pmtusize;
 
-#ifdef RTX
-  counters.receivedDataPktCounter++;
-#endif	
-  // check if a recv_data exist and enter data
+  /* check if a recv_data exists*/
   for (recv_id = 0; recv_id < RECVDATABUFSIZE; recv_id++) {
     if (recvdatabuf[recv_id] != NULL) {
       if (msg_h->remote_con_id == recvdatabuf[recv_id]->connectionID &&
@@ -1038,238 +1113,229 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
       if(free_recv_id == -1)
         free_recv_id = recv_id;
   }
+  rdata = recvdatabuf[recv_id];
 
+  /*no recv_data found: create one*/
   if(recv_id == RECVDATABUFSIZE) {
-    debug(" recv id not found (free found: %d)\n", free_recv_id);
-    //no recv_data found: create one
-    recv_id = free_recv_id;
-    recvdatabuf[recv_id] = (recvdata *) malloc(sizeof(recvdata));
-    memset(recvdatabuf[recv_id], 0, sizeof(recvdata));
-    recvdatabuf[recv_id]->connectionID = msg_h->remote_con_id;
-    recvdatabuf[recv_id]->seqnr = msg_h->msg_seq_num;
-    recvdatabuf[recv_id]->monitoringDataHeaderLen = msg_h->len_mon_data_hdr;
-    recvdatabuf[recv_id]->bufsize = msg_h->msg_length + msg_h->len_mon_data_hdr;
-    recvdatabuf[recv_id]->recvbuf = (char *) malloc(recvdatabuf[recv_id]->bufsize);
-    recvdatabuf[recv_id]->arrivedBytes = 0;	//count this without the Mon headers
-#ifdef RTX
-    recvdatabuf[recv_id]->txConnectionID = msg_h->local_con_id;
-    recvdatabuf[recv_id]->expectedOffset = 0;
-    recvdatabuf[recv_id]->gapCounter = 0;
-    recvdatabuf[recv_id]->last_pkt_timeout_event = NULL;
-#endif
-
-    /*
-     * read the timeout data and set it
-     */
-    recvdatabuf[recv_id]->timeout_value = recv_timeout;
-    recvdatabuf[recv_id]->timeout_event = NULL;
-    recvdatabuf[recv_id]->recvID = recv_id;
-    recvdatabuf[recv_id]->starttime = time(NULL);
-    recvdatabuf[recv_id]->msgtype = msg_h->msg_type;
-
-#ifdef FEC
-    if(recvdatabuf[recv_id]->msgtype==17 && recvdatabuf[recv_id]->bufsize>pmtusize){
-      recvdatabuf[recv_id]->nix=0;
-      recvdatabuf[recv_id]->pix = ( int * ) malloc ( (recvdatabuf[recv_id]->bufsize/pmtusize) * sizeof ( int ));
-      recvdatabuf[recv_id]->pix_chk = ( int * ) malloc ( (recvdatabuf[recv_id]->bufsize/pmtusize) * sizeof ( int ));
-      for(i=0;i<(recvdatabuf[recv_id]->bufsize/pmtusize);i++)
-        recvdatabuf[recv_id]->pix_chk[i] = 0;
-    }
-#endif
-
-    // fill the buffer with zeros
-    memset(recvdatabuf[recv_id]->recvbuf, 0, recvdatabuf[recv_id]->bufsize);
-    debug(" new @ id:%d\n",recv_id);
-  } else {	//message structure already exists, no need to create new
-    debug(" found @ id:%d (arrived before this packet: bytes:%d fragments%d\n",recv_id, recvdatabuf[recv_id]->arrivedBytes, recvdatabuf[recv_id]->recvFragments);
-    if(recvdatabuf[recv_id]->status == COMPLETE) {
+    if (free_recv_id == -1){
+      fprintf (stderr, "No recvdata available, dropping fragment\n");
       return;
     }
-  }
+    recvdatabuf[free_recv_id] = (recvdata *) malloc(sizeof(recvdata));
+    rdata = recvdatabuf [free_recv_id];
+    memset(rdata, 0, sizeof(recvdata));
+    rdata->connectionID = msg_h->remote_con_id;
+    rdata->seqnr = msg_h->msg_seq_num;
+    rdata->monitoringDataHeaderLen = msg_h->len_mon_data_hdr;
+    rdata->bufsize = msg_h->msg_length + msg_h->len_mon_data_hdr;
+    rdata->recvbuf = (char *) malloc(rdata->bufsize);
+    rdata->arrivedBytes = 0;	
+#ifdef RTX
+    rdata->last_pkt_timeout_event = NULL;
+    rdata->last = 0;
+    rdata->hole = NULL;
+#endif
 
-  //if first packet extract mon data header and advance pointer
+    /* read the timeout data and set it*/
+    rdata->timeout_value = recv_timeout;
+    rdata->timeout_event = NULL;
+    rdata->recvID = recv_id;
+    rdata->starttime = time(NULL);
+    rdata->msgtype = msg_h->msg_type;
+#ifdef FEC
+    if(rdata->msgtype==17 && rdata->bufsize>pmtusize){
+      rdata->nix=0;
+      rdata->pix=(int *) malloc( (rdata->bufsize/pmtusize) * sizeof ( int ));
+      rdata->pix_chk=(int *) malloc( (rdata->bufsize/pmtusize) * sizeof(int));
+      for(i=0;i<(rdata->bufsize/pmtusize);i++)
+        rdata->pix_chk[i] = 0;
+    }
+#endif
+    memset(rdata->recvbuf, 0, rdata->bufsize);
+  } 
+    
+  /*if first packet extract mon data header and advance pointer*/
   if (msg_h->offset == 0) {
-    //fprintf(stderr,"Hoooooray!! We have first packet of some message!!\n");
-    memcpy(recvdatabuf[recv_id]->recvbuf, msgbuf, msg_h->len_mon_data_hdr);
+    memcpy(rdata->recvbuf, msgbuf, msg_h->len_mon_data_hdr);
     msgbuf += msg_h->len_mon_data_hdr;
     bufsize -= msg_h->len_mon_data_hdr;
-    recvdatabuf[recv_id]->firstPacketArrived = 1;
+    rdata->firstPacketArrived = 1;
   }
 
-  /*increment counters*/
-  recvdatabuf[recv_id]->recvFragments++;
-  recvdatabuf[recv_id]->arrivedBytes += bufsize; 
-
-  // enter the data into the buffer
+  /* enter the data into the buffer*/
 #ifdef FEC
-  if(recvdatabuf[recv_id]->msgtype==17 && recvdatabuf[recv_id]->bufsize>pmtusize && recvdatabuf[recv_id]->pix_chk[recvdatabuf[recv_id]->nix]==0)
-    memcpy(recvdatabuf[recv_id]->recvbuf + msg_h->len_mon_data_hdr + (recvdatabuf[recv_id]->nix)*pmtusize, msgbuf, bufsize);
+  if(rdata->msgtype==17 && 
+      rdata->bufsize>pmtusize && 
+      rdata->pix_chk[rdata->nix]==0)
+
+    memcpy(rdata->recvbuf + msg_h->len_mon_data_hdr + 
+        (rdata->nix)*pmtusize, msgbuf, bufsize);
   else
-    memcpy(recvdatabuf[recv_id]->recvbuf + msg_h->len_mon_data_hdr + msg_h->offset, msgbuf, bufsize);
+    memcpy(rdata->recvbuf + msg_h->len_mon_data_hdr + 
+        msg_h->offset, msgbuf, bufsize);
 #else
-  memcpy(recvdatabuf[recv_id]->recvbuf + msg_h->len_mon_data_hdr + msg_h->offset, msgbuf, bufsize);
+  memcpy(rdata->recvbuf + msg_h->len_mon_data_hdr + 
+      msg_h->offset, msgbuf, bufsize);
 #endif
 
 #ifdef RTX
-  // detecting a new gap	
-  if (msg_h->offset > recvdatabuf[recv_id]->expectedOffset && recvdatabuf[recv_id]->gapCounter < RTX_MAX_GAPS) {
-    recvdatabuf[recv_id]->gapArray[recvdatabuf[recv_id]->gapCounter].offsetFrom = recvdatabuf[recv_id]->expectedOffset;
-    recvdatabuf[recv_id]->gapArray[recvdatabuf[recv_id]->gapCounter].offsetTo = msg_h->offset;
-    struct pkt_recv_timeout_cb_arg *args = malloc(sizeof *args);
-    args->recv_id = recv_id;
-    args->seqnr = recvdatabuf[recv_id]->seqnr;
-    args->gap = recvdatabuf[recv_id]->gapCounter++;
-    args->external_socketID = &connectbuf[msg_h->remote_con_id]->external_socketID;
-    event_base_once(base, -1, EV_TIMEOUT, &pkt_recv_timeout_cb, (void *) args, &pkt_recv_timeout);
+  /*check for hole*/
+  if (msg_h->offset < rdata->last){
+    rdata->hole = handle_hole(rdata->hole, &rdata->recvbuf[msg_h->offset], 
+						&rdata->recvbuf[msg_h->offset+bufsize]);
   }
-
-  //filling the gap by delayed packets
-  if (msg_h->offset < recvdatabuf[recv_id]->expectedOffset){
-    int i;
-    counters.receivedRTXDataPktCounter++;
-    for (i = 0; i < recvdatabuf[recv_id]->gapCounter; i++){
-      if (msg_h->offset == recvdatabuf[recv_id]->gapArray[i].offsetFrom) {
-        recvdatabuf[recv_id]->gapArray[i].offsetFrom += bufsize;
-        break;
-      }
-      if (msg_h->offset == (recvdatabuf[recv_id]->gapArray[i].offsetTo - bufsize)) {
-        recvdatabuf[recv_id]->gapArray[i].offsetTo -= bufsize;
-        break;
-      }
+  else {
+    if (msg_h->offset > rdata->last){
+      rdata->hole = new_hole(rdata->hole, 
+        (void*)&rdata->recvbuf[rdata->last], &rdata->recvbuf[msg_h->offset]);
     }
+    rdata->last = (msg_h->offset + bufsize);
   }
 
-  //updating the expectedOffset	
-  if (msg_h->offset >= recvdatabuf[recv_id]->expectedOffset) recvdatabuf[recv_id]->expectedOffset = msg_h->offset + bufsize;
 #endif
 
-  //TODO very basic checkif all fragments arrived: has to be reviewed
-  if(recvdatabuf[recv_id]->arrivedBytes == recvdatabuf[recv_id]->bufsize - recvdatabuf[recv_id]->monitoringDataHeaderLen) {
-    recvdatabuf[recv_id]->status = COMPLETE; //buffer full -> msg completly arrived
+  /*check if all the fragments arrived*/
+  if ( ( (rdata->bufsize - msg_h->len_mon_data_hdr) == rdata->last) 
+      && rdata->hole == NULL) {
+    rdata->status = COMPLETE; 
 #ifdef FEC
-    if(recvdatabuf[recv_id]->msgtype==17 && recvdatabuf[recv_id]->bufsize>pmtusize){
-      prev_sqnr=recvdatabuf[recv_id]->seqnr;
+    if(rdata->msgtype==17 && rdata->bufsize>pmtusize){
+      prev_sqnr=rdata->seqnr;
       int npaks=0;
       int toffset=20;
       int tpkt_len=pmtusize;
-      npaks=(int)(recvdatabuf[recv_id]->bufsize/pmtusize);
+      npaks=(int)(rdata->bufsize/pmtusize);
       src = ( char ** )malloc ( npaks * sizeof ( char * ));
       code = fec_new(npaks,256);
       for(i=0; i<npaks; i++){
         src[i] = ( char * )malloc(tpkt_len * sizeof ( char ) );
         for(j=0; j<tpkt_len; j++){
-          if (toffset+j < recvdatabuf[recv_id]->bufsize) {
-            *(src[i]+j)=*(recvdatabuf[recv_id]->recvbuf+toffset+j);
+          if (toffset+j < rdata->bufsize) {
+            *(src[i]+j)=*(rdata->recvbuf+toffset+j);
           }else {
             *(src[i]+j)=0;
           }
         }
         toffset += tpkt_len;
       }
-      recvdatabuf[recv_id]->pix[recvdatabuf[recv_id]->nix]=(int)(msg_h->offset/pmtusize);
-      fec_decode(code, src, recvdatabuf[recv_id]->pix, tpkt_len);
+      rdata->pix[rdata->nix]=
+        (int)(msg_h->offset/pmtusize);
+
+      fec_decode(code, src, rdata->pix, tpkt_len);
       toffset=20;
       for(i=0; i<npaks; i++){
         for(j=0; j<tpkt_len; j++){
-          if (toffset+j < recvdatabuf[recv_id]->bufsize) {
-            *(recvdatabuf[recv_id]->recvbuf+toffset+j)=*(src[i]+j);
+          if (toffset+j < rdata->bufsize) {
+            *(rdata->recvbuf+toffset+j)=*(src[i]+j);
           }
         }
         toffset+=tpkt_len;
       }
-      recvdatabuf[recv_id]->firstPacketArrived = 1;	//we've decoded the first packet as well
+      /*we've decoded the first packet as well*/
+      rdata->firstPacketArrived = 1;	
       fec_free(code);
       for(i=0; i<npaks; i++){
         free(src[i]);
       }
       free(src);
       nix=0;
-      recvdatabuf[recv_id]->nix=0;
+      rdata->nix=0;
     }
 #endif
   } else {
-    recvdatabuf[recv_id]->status = ACTIVE;
+    rdata->status = ACTIVE;
 #ifdef FEC
-    if(recvdatabuf[recv_id]->msgtype==17 && recvdatabuf[recv_id]->bufsize>pmtusize && recvdatabuf[recv_id]->pix_chk[recvdatabuf[recv_id]->nix]==0){
-      recvdatabuf[recv_id]->pix[recvdatabuf[recv_id]->nix]=(int)(msg_h->offset/pmtusize);
-      recvdatabuf[recv_id]->pix_chk[recvdatabuf[recv_id]->nix]=1;
-      recvdatabuf[recv_id]->nix++;
+    if(rdata->msgtype==17 
+        && rdata->bufsize>pmtusize 
+        && rdata->pix_chk[rdata->nix]==0){
+      rdata->pix[rdata->nix]=(int)(msg_h->offset/pmtusize);
+      rdata->pix_chk[rdata->nix]=1;
+      rdata->nix++;
     }
 #endif
   }
 
   if (recv_data_callback) {
-    if(recvdatabuf[recv_id]->status == COMPLETE) {
-      // Monitoring layer hook
+    if(rdata->status == COMPLETE) {
       if(get_Recv_data_inf_cb != NULL) {
+        
+        /*monitoring layer hook*/
         mon_data_inf recv_data_inf;
 
         recv_data_inf.remote_socketID =
-          &(connectbuf[recvdatabuf[recv_id]->connectionID]->external_socketID);
-        recv_data_inf.buffer = recvdatabuf[recv_id]->recvbuf;
-        recv_data_inf.bufSize = recvdatabuf[recv_id]->bufsize;
-        recv_data_inf.msgtype = recvdatabuf[recv_id]->msgtype;
-        recv_data_inf.monitoringDataHeaderLen = recvdatabuf[recv_id]->monitoringDataHeaderLen;
-        recv_data_inf.monitoringDataHeader = recvdatabuf[recv_id]->monitoringDataHeaderLen ?
-          recvdatabuf[recv_id]->recvbuf : NULL;
+          &(connectbuf[rdata->connectionID]->external_socketID);
+        recv_data_inf.buffer = rdata->recvbuf;
+        recv_data_inf.bufSize = rdata->bufsize;
+        recv_data_inf.msgtype = rdata->msgtype;
+        recv_data_inf.monitoringDataHeaderLen = 
+            rdata->monitoringDataHeaderLen;
+        
+        recv_data_inf.monitoringDataHeader = 
+          rdata->monitoringDataHeaderLen ? 
+          rdata->recvbuf : NULL;
+
         gettimeofday(&recv_data_inf.arrival_time, NULL);
-        recv_data_inf.firstPacketArrived = recvdatabuf[recv_id]->firstPacketArrived;
-        recv_data_inf.recvFragments = recvdatabuf[recv_id]->recvFragments;
+        recv_data_inf.firstPacketArrived = 
+          rdata->firstPacketArrived;
+
+        recv_data_inf.recvFragments = 
+          rdata->recvFragments;
+
         recv_data_inf.priority = false;
         recv_data_inf.padding = false;
         recv_data_inf.confirmation = false;
         recv_data_inf.reliable = false;
 
-        // send data recv callback to monitoring module
-
         (get_Recv_data_inf_cb) ((void *) &recv_data_inf);
       }
 
-      // Get the right callback
+      /*Get the right callback*/
       receive_data_cb receive_data_callback = recvcbbuf[msg_h->msg_type];
       if (receive_data_callback) {
-
         recv_params rParams;
 
-        rParams.nrMissingBytes = recvdatabuf[recv_id]->bufsize - recvdatabuf[recv_id]->monitoringDataHeaderLen - recvdatabuf[recv_id]->arrivedBytes;
-        rParams.recvFragments = recvdatabuf[recv_id]->recvFragments;
-        rParams.msgtype = recvdatabuf[recv_id]->msgtype;
-        rParams.connectionID = recvdatabuf[recv_id]->connectionID;
+        rParams.nrMissingBytes = 0; //TODO
+        // rdata->bufsize - rdata->monitoringDataHeaderLen - rdata->arrivedBytes;
+
+        rParams.recvFragments = rdata->recvFragments;
+        rParams.msgtype = rdata->msgtype;
+        rParams.connectionID = rdata->connectionID;
         rParams.remote_socketID =
-          &(connectbuf[recvdatabuf[recv_id]->connectionID]->external_socketID);
+          &(connectbuf[rdata->connectionID]->external_socketID);
 
         char str[1000];
         mlSocketIDToString(rParams.remote_socketID,str,999);
-        debug("ML: received message from conID:%d, %s\n",recvdatabuf[recv_id]->connectionID,str);
-        rParams.firstPacketArrived = recvdatabuf[recv_id]->firstPacketArrived;
+        debug("ML: received message from conID:%d, %s\n",
+            rdata->connectionID,str);
+        rParams.firstPacketArrived = rdata->firstPacketArrived;
 
-#ifdef RTX
-        counters.receivedCompleteMsgCounter++;
-        //mlShowCounters();
-#endif
-
-        (receive_data_callback) (recvdatabuf[recv_id]->recvbuf + recvdatabuf[recv_id]->monitoringDataHeaderLen, recvdatabuf[recv_id]->bufsize - recvdatabuf[recv_id]->monitoringDataHeaderLen,
-            recvdatabuf[recv_id]->msgtype, (void *) &rParams);
+        (receive_data_callback) (rdata->recvbuf + 
+            rdata->monitoringDataHeaderLen, 
+            rdata->bufsize - 
+            rdata->monitoringDataHeaderLen,
+            rdata->msgtype, (void *) &rParams);
       } else {
-        warn("ML: callback not initialized for this message type: %d!\n",msg_h->msg_type);
+        warn("ML: callback not initialized for this message type: %d!\n",
+            msg_h->msg_type);
       }
-
-      //clean up after a timeout
     }
 
-    //start time out for cleaning up this slot
-    if (!recvdatabuf[recv_id]->timeout_event) {
-      recvdatabuf[recv_id]->timeout_event = event_new(base, -1, EV_TIMEOUT, &recv_timeout_cb, (void *) (long)recv_id);
-      evtimer_add(recvdatabuf[recv_id]->timeout_event, &recv_timeout);
+    /*start time out for cleaning up this slot*/
+    if (!rdata->timeout_event) {
+      rdata->timeout_event = event_new(
+          base, -1, EV_TIMEOUT, &recv_timeout_cb, (void *) (long)recv_id);
+
+      evtimer_add(rdata->timeout_event, &recv_timeout);
 #ifdef RTX
-      recvdatabuf[recv_id]->last_pkt_timeout_event = event_new(base, -1, EV_TIMEOUT, &last_pkt_recv_timeout_cb, (void *) (long)recv_id);
-      evtimer_add(recvdatabuf[recv_id]->last_pkt_timeout_event, &last_pkt_recv_timeout);
+      rdata->last_pkt_timeout_event = event_new(base, 
+          -1, EV_TIMEOUT, &last_pkt_recv_timeout_cb, (void *) (long)recv_id);
+      evtimer_add(
+        rdata->last_pkt_timeout_event, &last_pkt_recv_timeout);
 #endif
     }
   }
 }
 
-//done
 void pmtu_timeout_cb(int fd, short event, void *arg)
 {
 
@@ -1336,7 +1402,6 @@ void pmtu_timeout_cb(int fd, short event, void *arg)
   //retry
   resend_conn_msg(con_id);
 }
-
 
 int schedule_pmtu_timeout(int con_id)
 {
