@@ -163,7 +163,7 @@ typedef struct {
 #ifdef RTX
   struct event* last_pkt_timeout_event;
   unsigned int last;
-  unsigned int *hole;
+  hlist *hole;
   unsigned int txConnectionID;
 #endif
 #ifdef FEC

@@ -1038,18 +1038,18 @@ hlist* handle_hole(hlist* hole, void* start, void* end)
 	/* Search list for hole preceeding the new fragment,       */
 	/* checking list consistency and if fragment is duplicate. */
 	if (!hole){
-		printf("Dup package or inconsistent list\n");
+		printf("Dup package or inconsistent list (NULL hole)\n");
 		return hole;
 	}
 	while((void*) position > start){
 		position=position->prev;
 		if (position == hole){
-			printf("Dup package or inconsistent list\n");
+			printf("Dup package or inconsistent list (position==hole)\n");
 			return hole;
 		}
 	}
 	if (position->end < end){
-		printf("Dup package or inconsistent list\n");
+		printf("Dup package or inconsistent list (end<end)\n");
 		return hole;
 	}
 
@@ -1096,6 +1096,7 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
 
   int recv_id, free_recv_id = -1;
   int pmtusize;
+  char * databuf;
   recvdata *rdata;
   if(connectbuf[msg_h->remote_con_id] == NULL) {
     debug("ML: Received a message not related to any opened connection!\n");
@@ -1153,13 +1154,47 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
 #endif
     memset(rdata->recvbuf, 0, rdata->bufsize);
   } 
+  databuf = rdata->recvbuf + msg_h->len_mon_data_hdr;
     
   /*if first packet extract mon data header and advance pointer*/
   if (msg_h->offset == 0) {
-    memcpy(rdata->recvbuf, msgbuf, msg_h->len_mon_data_hdr);
     msgbuf += msg_h->len_mon_data_hdr;
     bufsize -= msg_h->len_mon_data_hdr;
     rdata->firstPacketArrived = 1;
+  }
+
+#ifdef RTX
+  /*check for holes*/
+  //fprintf (stderr, "RECEIVE %7d bytes, seq %7d, offset %7d\n",
+  //    bufsize, msg_h->msg_seq_num, msg_h->offset);
+  if (msg_h->offset < rdata->last){
+  //  fprintf (stderr, "filling. New hole: %u, end:%u, next:%u, prev:%u\n", 
+  //      rdata->hole, rdata->hole->end, rdata->hole->next, rdata->hole->prev);
+  
+    rdata->hole = handle_hole(rdata->hole, (databuf + msg_h->offset), 
+						(databuf + msg_h->offset + bufsize) );
+  //  if (rdata->hole)
+  //  fprintf (stderr, "filled. New hole: %u, end:%u, next:%u, prev:%u\n", 
+  //      rdata->hole, rdata->hole->end, rdata->hole->next, rdata->hole->prev);
+    
+  }
+  else {
+    if (msg_h->offset > rdata->last){
+  //    fprintf (stderr, "HOLE! %d-%d ", 
+  //      &rdata->recvbuf[msg_h->offset], &rdata->recvbuf[msg_h->offset+bufsize]);
+    
+      rdata->hole = new_hole(rdata->hole, 
+          (void*)(databuf + rdata->last), &databuf[msg_h->offset]);
+
+   //   fprintf (stderr, "hole: %u, end:%u, next:%u, prev:%u\n", rdata->hole, rdata->hole->end,
+   //       rdata->hole->next, rdata->hole->prev);
+    }
+    rdata->last = (msg_h->offset + bufsize);
+  }
+#endif
+
+  if (msg_h->offset == 0) {
+    memcpy(rdata->recvbuf, msgbuf-msg_h->len_mon_data_hdr, msg_h->len_mon_data_hdr);
   }
 
   /* enter the data into the buffer*/
@@ -1178,26 +1213,11 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
       msg_h->offset, msgbuf, bufsize);
 #endif
 
-#ifdef RTX
-  /*check for hole*/
-  if (msg_h->offset < rdata->last){
-    rdata->hole = handle_hole(rdata->hole, &rdata->recvbuf[msg_h->offset], 
-						&rdata->recvbuf[msg_h->offset+bufsize]);
-  }
-  else {
-    if (msg_h->offset > rdata->last){
-      rdata->hole = new_hole(rdata->hole, 
-        (void*)&rdata->recvbuf[rdata->last], &rdata->recvbuf[msg_h->offset]);
-    }
-    rdata->last = (msg_h->offset + bufsize);
-  }
-
-#endif
-
   /*check if all the fragments arrived*/
   if ( ( (rdata->bufsize - msg_h->len_mon_data_hdr) == rdata->last) 
       && rdata->hole == NULL) {
     rdata->status = COMPLETE; 
+    fprintf (stderr, "Completed seq %d\n", msg_h->msg_seq_num);
 #ifdef FEC
     if(rdata->msgtype==17 && rdata->bufsize>pmtusize){
       prev_sqnr=rdata->seqnr;
@@ -1320,12 +1340,12 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
       }
     }
 
-    /*start time out for cleaning up this slot*/
+    /*start timeouts to clean the slot*/
     if (!rdata->timeout_event) {
       rdata->timeout_event = event_new(
           base, -1, EV_TIMEOUT, &recv_timeout_cb, (void *) (long)recv_id);
-
       evtimer_add(rdata->timeout_event, &recv_timeout);
+
 #ifdef RTX
       rdata->last_pkt_timeout_event = event_new(base, 
           -1, EV_TIMEOUT, &last_pkt_recv_timeout_cb, (void *) (long)recv_id);
