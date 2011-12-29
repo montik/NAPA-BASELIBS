@@ -1816,9 +1816,9 @@ void recv_pkg(int fd, short event, void *arg)
     if (get_Rtt_cb != NULL){
       rtt = (*get_Rtt_cb) (&(connectbuf[0]->external_socketID));
     }
-    fprintf(fd, "%d.%d\t%d\t%d\t%d\t%f\n",now.tv_sec, now.tv_usec, 
+    fprintf(fd, "%d.%-6d %7d%7d%7d%7d %10f\n",now.tv_sec, now.tv_usec, 
       counters.receivedDataPktCounter, counters.receivedCompleteMsgCounter,
-      counters.receivedIncompleteMsgCounter, rtt);
+      counters.receivedIncompleteMsgCounter, counters.sentNACKPktCounter, rtt);
     fflush (fd);
     fclose(fd);
   }
