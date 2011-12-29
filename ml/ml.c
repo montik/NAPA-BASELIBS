@@ -196,23 +196,22 @@ int min(int a, int b) {
 //*********Counters**********
 
 struct Counters {
-  unsigned int receivedCompleteMsgCounter;
-  unsigned int receivedIncompleteMsgCounter;
+  unsigned int receivedCompleteMsgCounter;//used
+  unsigned int receivedIncompleteMsgCounter;//used
   unsigned int receivedDataPktCounter;
   unsigned int receivedRTXDataPktCounter;
-  unsigned int receivedNACK1PktCounter;
+  unsigned int receivedNACKPktCounter;
   unsigned int receivedNACKMorePktCounter;
   unsigned int sentDataPktCounter;
   unsigned int sentRTXDataPktCtr;
-  unsigned int sentNACK1PktCounter;
+  unsigned int sentNACKPktCounter;//used
   unsigned int sentNACKMorePktCounter;
 } counters;
 
 struct pkt_recv_timeout_cb_arg{
   int recv_id;
   int seqnr;
-  int gap;
-  socket_ID* external_socketID;
+  hlist* hole;
 };
 
 
@@ -228,8 +227,10 @@ static struct timeval pkt_recv_timeout_retry = PKT_RECV_TIMEOUT_RETRY_DEFAULT;
 static struct timeval last_pkt_recv_timeout = LAST_PKT_RECV_TIMEOUT_DEFAULT;
 
 void mlShowCounters() {
+  /*
   counters.sentRTXDataPktCtr = sentRTXDataPktCounter;
   fprintf(stderr, "\nreceivedCompleteMsgCounter: %d\nreceivedIncompleteMsgCounter: %d\nreceivedDataPktCounter: %d\nreceivedRTXDataPktCounter: %d\nreceivedNACK1PktCounter: %d\nreceivedNACKMorePktCounter: %d\nsentDataPktCounter: %d\nsentRTXDataPktCtr: %d\nsentNACK1PktCounter: %d\nsentNACKMorePktCounter: %d\n", counters.receivedCompleteMsgCounter, counters.receivedIncompleteMsgCounter, counters.receivedDataPktCounter, counters.receivedRTXDataPktCounter, counters.receivedNACK1PktCounter, counters.receivedNACKMorePktCounter, counters.sentDataPktCounter, counters.sentRTXDataPktCtr, counters.sentNACK1PktCounter, counters.sentNACKMorePktCounter);
+  */
   return;
 }
 
@@ -253,11 +254,13 @@ void send_msg(int con_id, int msg_type, void* msg, int msg_len, bool truncable, 
 void pkt_recv_timeout_cb(int fd, short event, void *arg)
 {
   struct pkt_recv_timeout_cb_arg *args = arg;
+  struct timeval time_out;
+  socket_ID external_socketID;
+  hlist* hole= args->hole;
   int recv_id = args->recv_id;
   int seqnr = args->seqnr;
-  int gap = args->gap;
+  unsigned int bufstart;
   double rtt;
-  struct timeval time_out;
 
   debug("ML: pkt_recv_timeout_cb called. Timeout for id:%d\n",recv_id);
 
@@ -267,36 +270,39 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
     free(args);
     return;
   }
-//  if (recvdatabuf[recv_id]->gapArray[gap].offsetFrom == 
-//      recvdatabuf[recv_id]->gapArray[gap].offsetTo) {
-//   free(args);
-//    return;	
-//  }
+  
+  counters.sentNACKPktCounter++;
+  bufstart = (unsigned int)
+    recvdatabuf[recv_id]->recvbuf +
+    recvdatabuf[recv_id]->monitoringDataHeaderLen;
+  external_socketID = 
+    connectbuf[recvdatabuf[recv_id]->connectionID]->external_socketID;
 
   /*initialize and send nackmsg*/
-/*  struct nack_msg nackmsg;
+  struct nack_msg nackmsg;
   nackmsg.con_id = recvdatabuf[recv_id]->txConnectionID;
-  nackmsg.msg_seq_num = recvdatabuf[recv_id]->seqnr;
-  nackmsg.offsetFrom = recvdatabuf[recv_id]->gapArray[gap].offsetFrom;
-  nackmsg.offsetTo = recvdatabuf[recv_id]->gapArray[gap].offsetTo;
+  nackmsg.msg_seq_num = args->seqnr;
+  nackmsg.offsetFrom = (unsigned int) hole - bufstart;
+  nackmsg.offsetTo   = (unsigned int) hole->end -bufstart;
   unsigned int gapSize = nackmsg.offsetTo - nackmsg.offsetFrom;
   send_msg (recvdatabuf[recv_id]->connectionID, ML_NACK_MSG, 
         (char *) &nackmsg, sizeof(struct nack_msg), true, 
         &(connectbuf[recvdatabuf[recv_id]->connectionID]->defaultSendParams));
-*/ 
+
   /*set the next timeout*/
   if (get_Rtt_cb != NULL){
-    rtt = (*get_Rtt_cb) (args->external_socketID);
+    rtt = (*get_Rtt_cb) (&(external_socketID));
   }
   if (rtt){
     time_out.tv_sec = (int) rtt;
-    time_out.tv_usec = (rtt - (int) rtt) * 1000000 + 50000;
+    time_out.tv_usec = (rtt - (int) rtt) * 1000000 + 20000;
   }else{
     time_out.tv_sec = 0;
-    time_out.tv_usec = 50000;
+    time_out.tv_usec = 300000;
   }
-  event_base_once (base, -1, &time_out, &pkt_recv_timeout_cb, arg, 
-                  &pkt_recv_timeout_retry);
+  hole->pkt_event = event_new (base, -1, EV_TIMEOUT,
+      pkt_recv_timeout_cb, arg);
+  event_add (hole->pkt_event, &time_out);
 }
 
 void last_pkt_recv_timeout_cb(int fd, short event, void *arg){
@@ -932,6 +938,7 @@ void recv_timeout_cb(int fd, short event, void *arg)
   }
 
   if(recvdatabuf[recv_id]->status == ACTIVE) {
+    counters.receivedIncompleteMsgCounter++;
     // Monitoring layer hook
     if(get_Recv_data_inf_cb != NULL) {
       mon_data_inf recv_data_inf;
@@ -1006,7 +1013,7 @@ void recv_timeout_cb(int fd, short event, void *arg)
  *
  * the function returns the pointer to the just inserted hole
  */
-hlist* new_hole(hlist* hole, hlist* start, void* end)
+hlist* new_hole(hlist* hole, hlist* start, void* end, int recv_id)
 {
 	start->next= (hole?hole->next:start);
 	start->prev= (hole?hole:start);
@@ -1016,6 +1023,18 @@ hlist* new_hole(hlist* hole, hlist* start, void* end)
 		hole->next->prev = start;
 		hole->next = start;
 	}
+
+  /*add timeout*/
+  struct pkt_recv_timeout_cb_arg *args = 
+    malloc (sizeof (struct pkt_recv_timeout_cb_arg));
+  args->recv_id=recv_id;
+  args->seqnr  =recvdatabuf[recv_id]->seqnr;
+  args->hole   =start;
+  
+  start->pkt_event = event_new (base, -1, EV_TIMEOUT, pkt_recv_timeout_cb,
+      (void *) args);
+  event_add (start->pkt_event, &pkt_recv_timeout);
+
 	return start;
 }
 
@@ -1030,7 +1049,7 @@ hlist* new_hole(hlist* hole, hlist* start, void* end)
  *
  * The returned value is a pointer to the head of the list.
  */
-hlist* handle_hole(hlist* hole, void* start, void* end)
+hlist* handle_hole(hlist* hole, void* start, void* end, int recv_id)
 {
 	hlist *position, *created_hole;
 	position = hole;
@@ -1057,6 +1076,7 @@ hlist* handle_hole(hlist* hole, void* start, void* end)
 	/* consistent after the new fragment insertion          */
 	if ((void*)position == start){
 		if (position->end == end){
+      event_del(position->pkt_event);
 			if ((void *)position->prev == position)
 				return NULL;
 			position->prev->next = position->next;
@@ -1071,18 +1091,18 @@ hlist* handle_hole(hlist* hole, void* start, void* end)
 		}
 	}else if ((void*)position < start){
 		if (end != position->end){
-			new_hole(position, end, position->end);
+			new_hole(position, end, position->end, recv_id);
 			position->end = start;
 			return (position == hole?end:hole);
 		}
 		position->end = start;
 		return hole;
 	}
-	printf ("handle_hole: should not get here!!\n");
+	fprintf (stderr, "handle_hole: should not get here!!\n");
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
- * Process a single data message
+ * Process a single data fragment
  */
 void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
 {
@@ -1122,6 +1142,7 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
       fprintf (stderr, "No recvdata available, dropping fragment\n");
       return;
     }
+    recv_id = free_recv_id;
     recvdatabuf[free_recv_id] = (recvdata *) malloc(sizeof(recvdata));
     rdata = recvdatabuf [free_recv_id];
     memset(rdata, 0, sizeof(recvdata));
@@ -1172,7 +1193,7 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
   //      rdata->hole, rdata->hole->end, rdata->hole->next, rdata->hole->prev);
   
     rdata->hole = handle_hole(rdata->hole, (databuf + msg_h->offset), 
-						(databuf + msg_h->offset + bufsize) );
+						(databuf + msg_h->offset + bufsize), recv_id);
   //  if (rdata->hole)
   //  fprintf (stderr, "filled. New hole: %u, end:%u, next:%u, prev:%u\n", 
   //      rdata->hole, rdata->hole->end, rdata->hole->next, rdata->hole->prev);
@@ -1184,7 +1205,7 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
   //      &rdata->recvbuf[msg_h->offset], &rdata->recvbuf[msg_h->offset+bufsize]);
     
       rdata->hole = new_hole(rdata->hole, 
-          (void*)(databuf + rdata->last), &databuf[msg_h->offset]);
+          (void*)(databuf + rdata->last), &databuf[msg_h->offset], recv_id);
 
    //   fprintf (stderr, "hole: %u, end:%u, next:%u, prev:%u\n", rdata->hole, rdata->hole->end,
    //       rdata->hole->next, rdata->hole->prev);
@@ -1216,8 +1237,8 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
   /*check if all the fragments arrived*/
   if ( ( (rdata->bufsize - msg_h->len_mon_data_hdr) == rdata->last) 
       && rdata->hole == NULL) {
+    counters.receivedCompleteMsgCounter++;
     rdata->status = COMPLETE; 
-    fprintf (stderr, "Completed seq %d\n", msg_h->msg_seq_num);
 #ifdef FEC
     if(rdata->msgtype==17 && rdata->bufsize>pmtusize){
       prev_sqnr=rdata->seqnr;
@@ -1799,6 +1820,7 @@ void recv_pkg(int fd, short event, void *arg)
       counters.receivedDataPktCounter, counters.receivedCompleteMsgCounter,
       counters.receivedIncompleteMsgCounter, rtt);
     fflush (fd);
+    fclose(fd);
   }
 
   int mlInit(bool recv_data_cb,struct timeval timeout_value,const int port,const char *ipaddr,const int stun_port,const char *stun_ipaddr,receive_localsocketID_cb local_socketID_cb,void *arg)

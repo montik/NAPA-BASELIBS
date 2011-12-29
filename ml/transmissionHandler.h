@@ -134,8 +134,9 @@ struct gap {
 struct hole_list {
   struct hole_list* next;
   struct hole_list* prev;
-  
   void* end;
+
+  struct event *pkt_event;
 };
 
 typedef struct hole_list hlist;
