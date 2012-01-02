@@ -214,6 +214,10 @@ struct pkt_recv_timeout_cb_arg{
   hlist* hole;
 };
 
+struct last_pkt_recv_timeout_cb_arg{
+  int seqnr;
+  int recv_id;
+};
 
 extern unsigned int sentRTXDataPktCounter;
 
@@ -260,7 +264,7 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
   int recv_id = args->recv_id;
   int seqnr = args->seqnr;
   uint32_t bufstart;
-  double rtt;
+  double rtt = -1;
 
   debug("ML: pkt_recv_timeout_cb called. Timeout for id:%d\n",recv_id);
 
@@ -289,16 +293,13 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
         (char *) &nackmsg, sizeof(struct nack_msg), true, 
         &(connectbuf[recvdatabuf[recv_id]->connectionID]->defaultSendParams));
 
-  fprintf (stderr, "EDO: sent nack request for seq %10u %u-%u %16u - %u\n",
-      seqnr, nackmsg.offsetFrom, nackmsg.offsetTo, hole->end, bufstart);
-
   /*set the next timeout*/
   if (get_Rtt_cb != NULL){
     rtt = (*get_Rtt_cb) (&(external_socketID));
   }
-  if (rtt){
+  if (rtt > 0){
     time_out.tv_sec = (int) rtt;
-    time_out.tv_usec = (rtt - (int) rtt) * 1000000 + 20000;
+    time_out.tv_usec = (rtt - (int) rtt) * 1000000 + 80000;
   }else{
     time_out.tv_sec = 0;
     time_out.tv_usec = 300000;
@@ -306,12 +307,22 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
   hole->pkt_event = event_new (base, -1, EV_TIMEOUT,
       pkt_recv_timeout_cb, arg);
   event_add (hole->pkt_event, &time_out);
+
+  struct timeval now;
+  gettimeofday (&now, NULL);
+  fprintf (stderr, "%d.%06d EDO: sent nack: %10u %u-%u next:%d.%06d\n",
+      now.tv_sec, now.tv_usec,
+      seqnr, nackmsg.offsetFrom, nackmsg.offsetTo,
+      time_out.tv_sec, time_out.tv_usec);
 }
 
-void last_pkt_recv_timeout_cb(int fd, short event, void *arg){
-  recvdata *rdata = recvdatabuf [(long) arg];
+void last_pkt_recv_timeout_cb(int fd, short event, void *arg)
+{
+  struct last_pkt_recv_timeout_cb_arg *args = arg;
+  recvdata *rdata = recvdatabuf [args->recv_id];
 
-  if (rdata == NULL) {
+  if (rdata == NULL || rdata->seqnr != args->seqnr) {
+    free(arg);
     return;
   }
 
@@ -324,7 +335,12 @@ void last_pkt_recv_timeout_cb(int fd, short event, void *arg){
   if (rdata->last == rdata->bufsize - rdata->monitoringDataHeaderLen)
     return;
 
+  struct event *ev1;
   struct nack_msg nackmsg;
+  struct timeval to;
+  socket_ID external_socketID;
+  double rtt=-1;
+
   nackmsg.con_id = rdata->txConnectionID;
   nackmsg.msg_seq_num = rdata->seqnr;
   nackmsg.offsetFrom = rdata->last;
@@ -335,6 +351,20 @@ void last_pkt_recv_timeout_cb(int fd, short event, void *arg){
   send_msg (rdata->connectionID, ML_NACK_MSG, &nackmsg, 
       sizeof(struct nack_msg),true, 
       &(connectbuf[rdata->connectionID]->defaultSendParams));	
+  
+  /*set the next timeout*/
+  if (get_Rtt_cb != NULL){
+    external_socketID = 
+      connectbuf[recvdatabuf[args->recv_id]->connectionID]->external_socketID;
+    rtt = (*get_Rtt_cb) (&(external_socketID));
+  }
+  if (rtt > 0){
+    to.tv_sec = (int) rtt;
+    to.tv_usec = (rtt - (int) rtt) * 1000000 + 80000;
+
+    ev1 = event_new (base, -1, EV_TIMEOUT, last_pkt_recv_timeout_cb, arg);
+    event_add (ev1, &to);
+  }
   
   fprintf (stderr, "EDO: sent last nack for %d, %d-%d\n",
       nackmsg.msg_seq_num, nackmsg.offsetFrom, nackmsg.offsetTo);
@@ -1383,8 +1413,14 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
       evtimer_add(rdata->timeout_event, &recv_timeout);
 
 #ifdef RTX
+      /*start timeout for last fragments*/
+      struct last_pkt_recv_timeout_cb_arg *arg =
+        malloc (sizeof (struct last_pkt_recv_timeout_cb_arg));
+      arg->seqnr   = rdata->seqnr;
+      arg->recv_id = recv_id; 
+
       rdata->last_pkt_timeout_event = event_new(base, 
-          -1, EV_TIMEOUT, &last_pkt_recv_timeout_cb, (void *) (long)recv_id);
+          -1, EV_TIMEOUT, &last_pkt_recv_timeout_cb, (void *) arg);
       evtimer_add(
         rdata->last_pkt_timeout_event, &last_pkt_recv_timeout);
 #endif
