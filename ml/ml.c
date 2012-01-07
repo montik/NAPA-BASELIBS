@@ -21,6 +21,7 @@
  *
  */
 
+#include <signal.h>
 #include <ml_all.h>
 
 #ifdef FEC
@@ -570,7 +571,8 @@ void send_msg(int con_id, int msg_type, void* msg, int msg_len, bool truncable, 
           break;
         case OK:
 #ifdef RTX
-          if (msg_type < 127) counters.sentDataPktCounter++;
+          if (msg_type < 127) 
+            counters.sentDataPktCounter+=pkt_len;
 #endif
           //update
           offset += pkt_len;
@@ -599,8 +601,6 @@ void send_msg(int con_id, int msg_type, void* msg, int msg_len, bool truncable, 
   } while(offset != msg_len && !truncable);
 #endif
 } while(retry);
-//fprintf(stderr, "sentDataPktCounter after msg_seq_num = %d: %d\n", msg_h.msg_seq_num, counters.sentDataPktCounter);
-//fprintf(stderr, "sentRTXDataPktCounter after msg_seq_num = %d: %d\n", msg_h.msg_seq_num, counters.sentRTXDataPktCtr);
 }
 
 void pmtu_timeout_cb(int fd, short event, void *arg);
@@ -1702,7 +1702,7 @@ void recv_pkg(int fd, short event, void *arg)
     char filename[100];
     sprintf (filename,"%s.%d", "/tmp/counters_log", p);
     FILE *fd = fopen (filename, "a+");
-    if (fd == NULL){
+    if (fd <0){
       fprintf (stderr, "EDO: can't open counters log file\n %s\n", strerror(errno));
       exit(1);
     }
@@ -1718,8 +1718,36 @@ void recv_pkg(int fd, short event, void *arg)
     fflush (fd);
   }
 
-  int mlInit(bool recv_data_cb,struct timeval timeout_value,const int port,const char *ipaddr,const int stun_port,const char *stun_ipaddr,receive_localsocketID_cb local_socketID_cb,void *arg)
+  /*debug TODO remove :) */
+  int global_port;
+  
+  void ml_leave (int sig)
   {
+    char filename[100];
+    sprintf (filename,"%s.%d", "/tmp/last_log", global_port);
+    FILE *fd = fopen (filename, "a+");
+    if (fd < 0) {
+      fprintf (stderr, "EDO: can't open last_log file\n");
+    }
+
+    fprintf (fd, "%d, %d, %d\n",
+        counters.sentDataPktCounter,
+        counters.receivedCompleteMsgCounter,
+        counters.receivedIncompleteMsgCounter);
+    fclose(fd);
+    exit (sig);
+  }
+
+  int mlInit(bool recv_data_cb,
+      struct timeval timeout_value,const int port,
+      const char *ipaddr,const int stun_port,
+      const char *stun_ipaddr,
+      receive_localsocketID_cb local_socketID_cb,void *arg)
+  {
+    /*Debug*/
+    (void*) signal (SIGUSR1, ml_leave);
+    global_port = port;
+
     base = (struct event_base *) arg;
     recv_data_callback = recv_data_cb;
     mlSetRecvTimeout(timeout_value);
