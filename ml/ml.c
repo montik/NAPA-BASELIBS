@@ -1284,6 +1284,7 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
   if ( ( (rdata->bufsize - msg_h->len_mon_data_hdr) == rdata->last) 
       && rdata->hole == NULL) {
     counters.receivedCompleteMsgCounter++;
+    fprintf (stderr, "EDO: COMPLETE %d\n", msg_h->msg_seq_num);
     rdata->status = COMPLETE; 
 #ifdef FEC
     if(rdata->msgtype==17 && rdata->bufsize>pmtusize){
