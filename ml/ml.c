@@ -198,7 +198,9 @@ int min(int a, int b) {
 
 struct Counters {
   unsigned int receivedCompleteMsgCounter;
+  unsigned int receivedCompleteByteCounter;
   unsigned int receivedIncompleteMsgCounter;
+  unsigned int receivedIncompleteByteCounter;
   unsigned int receivedDataPktCounter;
   unsigned int receivedRTXDataPktCounter;
   unsigned int receivedNACK1PktCounter;
@@ -236,6 +238,7 @@ void mlShowCounters() {
 
 void recv_nack_msg(struct msg_header *msg_h, char *msgbuf, int msg_size)
 {
+  fprintf (stderr,"EDO RECEIVED NACK!!!!!!!!!!!!!!!!!!\n");
   struct nack_msg *nackmsg;
 
   msgbuf += msg_h->len_mon_data_hdr;
@@ -970,6 +973,8 @@ void recv_timeout_cb(int fd, short event, void *arg)
 
 #ifdef RTX
     counters.receivedIncompleteMsgCounter++;
+    counters.receivedIncompleteByteCounter+=recvdatabuf[recv_id]->bufsize;
+    fprintf (stderr, "EDO: dropping seq %d\n", recvdatabuf[recv_id]->seqnr);
 #endif
   }
 
@@ -1246,6 +1251,7 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
 
 #ifdef RTX
         counters.receivedCompleteMsgCounter++;
+        counters.receivedCompleteByteCounter+=msg_h->msg_length;
         //mlShowCounters();
 #endif
 
@@ -1730,10 +1736,13 @@ void recv_pkg(int fd, short event, void *arg)
       fprintf (stderr, "EDO: can't open last_log file\n");
     }
 
-    fprintf (fd, "%d, %d, %d\n",
-        counters.sentDataPktCounter,
+    fprintf (fd, "%-12u %-12u %-12u %-12u %-12u\n",
         counters.receivedCompleteMsgCounter,
-        counters.receivedIncompleteMsgCounter);
+        counters.receivedCompleteByteCounter,
+        counters.receivedIncompleteMsgCounter,
+        counters.receivedIncompleteByteCounter,
+        counters.sentNACK1PktCounter
+        );
     fclose(fd);
     exit (sig);
   }
