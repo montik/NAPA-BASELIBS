@@ -198,7 +198,9 @@ int min(int a, int b) {
 
 struct Counters {
   unsigned int receivedCompleteMsgCounter;//used
+  unsigned int receivedCompleteByteCounter;//used
   unsigned int receivedIncompleteMsgCounter;//used
+  unsigned int receivedIncompleteByteCounter;//used
   unsigned int receivedDataPktCounter;
   unsigned int receivedRTXDataPktCounter;
   unsigned int receivedNACKPktCounter;
@@ -975,8 +977,6 @@ void recv_timeout_cb(int fd, short event, void *arg)
   }
 
   if(recvdatabuf[recv_id]->status == ACTIVE) {
-    counters.receivedIncompleteMsgCounter++;
-    fprintf (stderr, "EDO: dropping msg %d\n", recvdatabuf[recv_id]->seqnr);
     // Monitoring layer hook
     if(get_Recv_data_inf_cb != NULL) {
       mon_data_inf recv_data_inf;
@@ -1015,6 +1015,7 @@ void recv_timeout_cb(int fd, short event, void *arg)
 
 #ifdef RTX
     counters.receivedIncompleteMsgCounter++;
+    counters.receivedIncompleteByteCounter+=recvdatabuf[recv_id]->bufsize;
 #endif
   }
 
@@ -1284,7 +1285,7 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
   if ( ( (rdata->bufsize - msg_h->len_mon_data_hdr) == rdata->last) 
       && rdata->hole == NULL) {
     counters.receivedCompleteMsgCounter++;
-    fprintf (stderr, "EDO: COMPLETE %d\n", msg_h->msg_seq_num);
+    counters.receivedCompleteByteCounter+=msg_h->msg_length;
     rdata->status = COMPLETE; 
 #ifdef FEC
     if(rdata->msgtype==17 && rdata->bufsize>pmtusize){
@@ -1888,10 +1889,13 @@ void recv_pkg(int fd, short event, void *arg)
       fprintf (stderr, "EDO: can't open last_log file\n");
     }
 
-    fprintf (fd, "%d, %d, %d\n",
-        counters.sentDataPktCounter,
+    fprintf (fd, "%-12u %-12u %-12u %-12u %-12u\n",
         counters.receivedCompleteMsgCounter,
-        counters.receivedIncompleteMsgCounter);
+        counters.receivedCompleteByteCounter,
+        counters.receivedIncompleteMsgCounter,
+        counters.receivedIncompleteByteCounter,
+        counters.sentNACKPktCounter
+        );
     fclose(fd);
     exit (sig);
   }
