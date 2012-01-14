@@ -1756,6 +1756,7 @@ void recv_pkg(int fd, short event, void *arg)
     /*Debug*/
     (void*) signal (SIGUSR1, ml_leave);
     global_port = port;
+    memset (&counters, 0, sizeof (struct Counters));
 
     base = (struct event_base *) arg;
     recv_data_callback = recv_data_cb;
