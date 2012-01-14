@@ -198,7 +198,9 @@ int min(int a, int b) {
 
 struct Counters {
   unsigned int receivedCompleteMsgCounter;
+  unsigned int receivedCompleteByteCounter;
   unsigned int receivedIncompleteMsgCounter;
+  unsigned int receivedIncompleteByteCounter;
   unsigned int receivedDataPktCounter;
   unsigned int receivedRTXDataPktCounter;
   unsigned int receivedNACK1PktCounter;
@@ -964,6 +966,7 @@ void recv_timeout_cb(int fd, short event, void *arg)
 
 #ifdef RTX
     counters.receivedIncompleteMsgCounter++;
+    counters.receivedIncompleteByteCounter+=recvdatabuf[recv_id]->bufsize;
 #endif
   }
 
@@ -1241,6 +1244,7 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
 
 #ifdef RTX
         counters.receivedCompleteMsgCounter++;
+        counters.receivedCompleteByteCounter+=msg_h->msg_length;
         //mlShowCounters();
 #endif
 
@@ -1725,10 +1729,13 @@ void recv_pkg(int fd, short event, void *arg)
       fprintf (stderr, "EDO: can't open last_log file\n");
     }
 
-    fprintf (fd, "%d, %d, %d\n",
-        counters.sentDataPktCounter,
+    fprintf (fd, "%-12u %-12u %-12u %-12u %-12u\n",
         counters.receivedCompleteMsgCounter,
-        counters.receivedIncompleteMsgCounter);
+        counters.receivedCompleteByteCounter,
+        counters.receivedIncompleteMsgCounter,
+        counters.receivedIncompleteByteCounter,
+        counters.sentNACK1PktCounter
+        );
     fclose(fd);
     exit (sig);
   }
@@ -1738,6 +1745,7 @@ void recv_pkg(int fd, short event, void *arg)
     /*Debug*/
     (void*) signal (SIGUSR1, ml_leave);
     global_port = port;
+    memset (&counters, 0, sizeof(struct Counters));
 
     base = (struct event_base *) arg;
     recv_data_callback = recv_data_cb;
