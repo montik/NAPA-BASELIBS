@@ -213,14 +213,10 @@ return NULL;
 
 int rtxPacketsFromTo(int connID, int msgSeqNum, int offsetFrom, int offsetTo) {
         int offset = offsetFrom;
-        fprintf(stderr,"EDO: Retransmission request for:%d,  %d-%d\n",connID, offsetFrom, offsetTo);
 
         while (offset < offsetTo) {
                 PacketContainer *packetToRTX = searchPacketInRTX(connID,msgSeqNum,offset,1);
-                if (packetToRTX == NULL){
-                fprintf (stderr, "NOT FOUND\n");
-                return 1;
-                }
+                if (packetToRTX == NULL) return 1;
 
                 //sending packet
                 //fprintf(stderr,"\t\t\t\t\t Retransmitting packet: %d of msg_seq_num %d.\n",offset/1349,msgSeqNum);
