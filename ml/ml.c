@@ -270,7 +270,6 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
   double rtt = -1;
 
   debug("ML: pkt_recv_timeout_cb called. Timeout for id:%d\n",recv_id);
-  fprintf(stderr,"ML: pkt_recv_timeout_cb called. Timeout for id:%d\n",recv_id);
 
   /*check if the message and the gap still exist*/
   if (recvdatabuf[recv_id] == NULL 
@@ -314,10 +313,6 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
 
   struct timeval now;
   gettimeofday (&now, NULL);
-  fprintf (stderr, "%d.%06d EDO: sent nack: %10u %u-%u next:%d.%06d\n",
-      now.tv_sec, now.tv_usec,
-      seqnr, nackmsg.offsetFrom, nackmsg.offsetTo,
-      time_out.tv_sec, time_out.tv_usec);
 }
 
 void last_pkt_recv_timeout_cb(int fd, short event, void *arg)
@@ -370,8 +365,6 @@ void last_pkt_recv_timeout_cb(int fd, short event, void *arg)
     event_add (ev1, &to);
   }
   
-  fprintf (stderr, "EDO: sent last nack for %d, %d-%d\n",
-      nackmsg.msg_seq_num, nackmsg.offsetFrom, nackmsg.offsetTo);
 }
 
 #endif
@@ -1169,9 +1162,6 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
   }
   pmtusize = connectbuf[msg_h->remote_con_id]->pmtusize;
 
-  fprintf (stderr, "EDO: received fragment seq %10d offset %d\n",
-      msg_h->msg_seq_num, msg_h->offset);
-
   /* check if a recv_data exists*/
   for (recv_id = 0; recv_id < RECVDATABUFSIZE; recv_id++) {
     if (recvdatabuf[recv_id] != NULL) {
@@ -1202,6 +1192,7 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
     rdata->arrivedBytes = 0;	
 #ifdef RTX
     rdata->last_pkt_timeout_event = NULL;
+    rdata->txConnectionID = msg_h->local_con_id;
     rdata->last = 0;
     rdata->hole = NULL;
 #endif
