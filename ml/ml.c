@@ -265,6 +265,7 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
   struct timeval time_out = pkt_recv_timeout;
 
   debug("ML: pkt_recv_timeout_cb called. Timeout for id:%d\n",recv_id);
+  fprintf(stderr, "ML: pkt_recv_timeout_cb called. Timeout for id:%d\n",recv_id);
 
   /*check if the message and the gap still exist*/
   if (recvdatabuf[recv_id] == NULL 
