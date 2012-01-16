@@ -270,6 +270,7 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg)
   double rtt = -1;
 
   debug("ML: pkt_recv_timeout_cb called. Timeout for id:%d\n",recv_id);
+  fprintf(stderr,"ML: pkt_recv_timeout_cb called. Timeout for id:%d\n",recv_id);
 
   /*check if the message and the gap still exist*/
   if (recvdatabuf[recv_id] == NULL 
@@ -1168,8 +1169,8 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
   }
   pmtusize = connectbuf[msg_h->remote_con_id]->pmtusize;
 
-  //fprintf ("EDO: received fragment seq %10d offset %d\n",
-  //    msg_h->msg_seq_num, msg_h->offset);
+  fprintf (stderr, "EDO: received fragment seq %10d offset %d\n",
+      msg_h->msg_seq_num, msg_h->offset);
 
   /* check if a recv_data exists*/
   for (recv_id = 0; recv_id < RECVDATABUFSIZE; recv_id++) {
