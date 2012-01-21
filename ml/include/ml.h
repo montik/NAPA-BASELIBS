@@ -256,6 +256,13 @@ typedef void (*connection_failed_cb)(int connectionID,void *arg);
  */
 typedef void (*receive_data_cb)(char *buffer,int buflen,unsigned char msgtype,recv_params *rparams);
 
+/**
+ * Typedef for a callback to obtain round trip time
+ * socket_ID is the pointer to socketid of the connection for which RTT is
+ * needed
+ */
+typedef double (*get_rtt_cb) (socketID_handle socketID);
+
 #ifdef __cplusplus
 extern "C" {
 #endif

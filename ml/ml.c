@@ -175,6 +175,9 @@ connection_failed_cb failed_Connection_cb = NULL;
  */
 receive_localsocketID_cb receive_SocketID_cb;
 
+/*RTT retrieving callback*/
+get_rtt_cb get_Rtt_cb=NULL;
+
 /*
  * boolean that defines if received data is transmitted to the upper layer
  * via callback or via upper layer polling
@@ -1772,6 +1775,15 @@ void mlSetVerbosity (int log_level) {
 }
 
 /* register callbacks  */
+void mlRegisterGetRtt(get_rtt_cb funct)
+{
+  if (funct == NULL){
+    error ("ML:Register get_rtt_cb failed: NULL ptr\n");
+  }else{
+    get_Rtt_cb = funct;
+  }
+}
+
 void mlRegisterGetRecvPktInf(get_recv_pkt_inf_cb recv_pkt_inf_cb){
 
 	if (recv_pkt_inf_cb == NULL) {
