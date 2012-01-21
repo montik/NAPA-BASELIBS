@@ -214,7 +214,7 @@ struct pkt_recv_timeout_cb_arg{
 	int recv_id;
 	int seqnr;
 	int gap;
-	int retry;
+  socket_ID* external_socketID;
 };
 
 
@@ -257,6 +257,8 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg){
 	int recv_id = args->recv_id;
 	int seqnr = args->seqnr;
 	int gap = args->gap;
+  double rtt = -1;
+  struct timeval time_out;
 
 	debug("ML: pkt_recv_timeout_cb called. Timeout for id:%d\n",recv_id);
 
@@ -272,6 +274,11 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg){
 		return;	
 	}
 
+  if (recvdatabuf[recv_id]->status == COMPLETE){
+    free(args);
+    return;
+  }
+
 	struct nack_msg nackmsg;
 	nackmsg.con_id = recvdatabuf[recv_id]->txConnectionID;
 	nackmsg.msg_seq_num = recvdatabuf[recv_id]->seqnr;
@@ -282,11 +289,19 @@ void pkt_recv_timeout_cb(int fd, short event, void *arg){
 
 	send_msg(recvdatabuf[recv_id]->connectionID, ML_NACK_MSG, (char *) &nackmsg, sizeof(struct nack_msg), true, &(connectbuf[recvdatabuf[recv_id]->connectionID]->defaultSendParams));	
 
-	if (--args->retry > 0) {
-		event_base_once(base, -1, EV_TIMEOUT, &pkt_recv_timeout_cb, arg, &pkt_recv_timeout_retry);	//prepare the next timeout
-	} else {
-		free(args);
-	}
+  /*set the next timeout*/
+  if (get_Rtt_cb != NULL){
+    rtt = (*get_Rtt_cb) (args->external_socketID);
+  }
+  if (rtt>0){
+    time_out.tv_sec = (int) rtt;
+    time_out.tv_usec = (rtt - (int) rtt) * 1000000 + 100000;
+  }else{
+    time_out.tv_sec = 0;
+    time_out.tv_usec = 400000;
+  }
+  event_base_once (base, -1, EV_TIMEOUT, &pkt_recv_timeout_cb, arg, 
+      &time_out);
 }
 
 void last_pkt_recv_timeout_cb(int fd, short event, void *arg){
@@ -1113,7 +1128,7 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
 		args->recv_id = recv_id;
 		args->seqnr = recvdatabuf[recv_id]->seqnr;
 		args->gap = recvdatabuf[recv_id]->gapCounter++;
-		args->retry = RTX_RETRY;
+    args->external_socketID = &connectbuf[msg_h->remote_con_id]->external_socketID;
 		event_base_once(base, -1, EV_TIMEOUT, &pkt_recv_timeout_cb, (void *) args, &pkt_recv_timeout);
 	}
 	
