@@ -150,8 +150,8 @@ typedef struct {
 #ifdef RTX
   struct event* last_pkt_timeout_event;
   int txConnectionID;
-  int expectedOffset;
-  int gapCounter; //index of the first "free slot"
+  void* last;
+  hole* hole;  
   struct gap gapArray[RTX_MAX_GAPS];
 #endif
 #ifdef FEC
