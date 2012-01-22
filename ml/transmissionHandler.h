@@ -126,6 +126,20 @@ struct gap {
 	int offsetFrom;
 	int offsetTo;
 };
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * Used to connect the holes as a doubly linked list: next e prev points to
+ * neigh and end to the end of the hole (not to the list end)
+ */
+struct hole_list {
+  struct hole_list* next;
+  struct hole_list* prev;
+  void* end;
+
+  struct event *pkt_event;
+};
+
+typedef struct hole_list hlist;
 #endif
 
 /**
@@ -150,8 +164,8 @@ typedef struct {
 #ifdef RTX
   struct event* last_pkt_timeout_event;
   int txConnectionID;
-  void* last;
-  hole* hole;  
+  unsigned int  last;
+  hlist* hole;  
   struct gap gapArray[RTX_MAX_GAPS];
 #endif
 #ifdef FEC
