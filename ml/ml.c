@@ -1008,6 +1008,95 @@ void recv_timeout_cb(int fd, short event, void *arg)
 	recvdatabuf[recv_id] = NULL;
 }
 
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * This function adds a hole in the hole list.
+ *
+ * hole	  : pointer to the hole after which the insertion will happen
+ * start  : pointer to the beginning of the new hole
+ * end		: pointer to the end of the new hole
+ *
+ * the function returns the pointer to the just inserted hole
+ */
+hlist* new_hole(hlist* hole, hlist* start, void* end, int recv_id)
+{
+	start->next= (hole?hole->next:start);
+	start->prev= (hole?hole:start);
+	start->end = end;
+	
+	if (hole) {
+		hole->next->prev = start;
+		hole->next = start;
+	}
+  hole_add_event (start, recv_id);
+
+	return start;
+}
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * This function fills a hole, adjusting his neighborood pointers.
+ * It has to be called when an incoming packet fills, even partially, an
+ * existing hole.
+ *
+ * hole	  : pointer to the head (last hole) in the list
+ * start	: pointer to the packet filling a hole
+ * end		: pointer to the end of the packet
+ *
+ * The returned value is a pointer to the head of the list.
+ */
+hlist* handle_hole(hlist* hole, void* start, void* end, int recv_id)
+{
+	hlist *position, *created_hole;
+	position = hole;
+
+	/* Search list for hole preceeding the new fragment,       */
+	/* checking list consistency and if fragment is duplicate. */
+	if (!hole){
+		printf("Dup package or inconsistent list (NULL hole)\n");
+		return hole;
+	}
+	while((void*) position > start){
+		position=position->prev;
+		if (position == hole){
+			printf("Dup package or inconsistent list (position==hole)\n");
+			return hole;
+		}
+	}
+	if (position->end < end){
+		printf("Dup package or inconsistent list (end<end)\n");
+		return hole;
+	}
+
+	/* Modify the filled hole, so that the list will remain */
+	/* consistent after the new fragment insertion          */
+	if ((void*)position == start){
+		if (position->end == end){
+      event_free(position->pkt_event);
+			if ((void *)position->prev == position)
+				return NULL;
+			position->prev->next = position->next;
+			position->next->prev = position->prev;
+			return (position == hole?position->prev:hole);
+		}
+		else{
+			position->prev->next = end;
+      event_free(position->pkt_event);
+			memcpy (end, position, sizeof(hlist));
+			position->next->prev = end;
+      hole_add_event((hlist*)end, recv_id);
+			return (position == hole?end:hole);
+		}
+	}else if ((void*)position < start){
+		if (end != position->end){
+			new_hole(position, end, position->end, recv_id);
+			position->end = start;
+			return (position == hole?end:hole);
+		}
+		position->end = start;
+		return hole;
+	}
+	fprintf (stderr, "handle_hole: should not get here!!\n");
+}
+
 // process a single recv data message
 void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
 {
@@ -1057,9 +1146,9 @@ void recv_data_msg(struct msg_header *msg_h, char *msgbuf, int bufsize)
 		recvdatabuf[recv_id]->arrivedBytes = 0;	//count this without the Mon headers
 #ifdef RTX
 		recvdatabuf[recv_id]->txConnectionID = msg_h->local_con_id;
-		recvdatabuf[recv_id]->expectedOffset = 0;
-		recvdatabuf[recv_id]->gapCounter = 0;
 		recvdatabuf[recv_id]->last_pkt_timeout_event = NULL;
+		recvdatabuf[recv_id]->hole = NULL;
+    recvdatabuf[recv_id]->last = 0;
 #endif
 
 		/*
